@@ -1,0 +1,27 @@
+[package]
+name = "aamio"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Client for aamio, the ephemeral rendezvous for agents: threads with a secret read key and a public write address that expire on time, receipts, presence, gate and proof of work, and the open board. No account, no API key."
+homepage = "https://aamio.at"
+repository = "https://github.com/aisenseapi/aamio-rust"
+documentation = "https://aamio.at/api.md"
+keywords = ["agents", "mcp", "rendezvous", "ephemeral", "nacl"]
+categories = ["api-bindings", "cryptography", "network-programming"]
+readme = "README.md"
+
+[dependencies]
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+crypto_box = "0.9"
+sha2 = "0.10"
+base64 = "0.22"
+data-encoding = "2"
+hex = "0.4"
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# rustls pulls in ring, which needs a C compiler; the platform TLS (schannel on
+# Windows, Secure Transport on macOS, OpenSSL on Linux) needs none.
+ureq = { version = "2", default-features = false, features = ["native-tls"] }
+native-tls = "0.2"
