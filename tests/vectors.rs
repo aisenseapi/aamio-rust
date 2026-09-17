@@ -161,3 +161,30 @@ fn the_plan() {
     assert!(p.stop.is_none() && p.bits == Some(8) && p.notes.len() == 1);
     assert_eq!((REQUIRE_MAX_BITS, ADVISE_MAX_BITS), (20, 18));
 }
+
+#[test]
+fn sealing_with_a_given_nonce_reproduces_the_vector() {
+    let v = vectors();
+    let a = Keys::from_seed_hex(s(&v, &["a", "seed"])).unwrap();
+    let envelope: Value = serde_json::from_str(s(&v, &["envelopeFromAToB"])).unwrap();
+    let nonce: [u8; 24] = unb64url(envelope["nonce"].as_str().unwrap()).unwrap().try_into().unwrap();
+    let sealed = a.seal_with_nonce(s(&v, &["b", "public"]), s(&v, &["plaintext"]).as_bytes(), nonce).unwrap();
+    assert_eq!(sealed, s(&v, &["envelopeFromAToB"]), "the same keys, plaintext and nonce give PyNaCl's envelope byte for byte");
+}
+
+#[test]
+fn the_solver_finds_the_nonce_the_slow_way_finds() {
+    let w = "b4netymg7r5nnt2yiscp";
+    let body: &[u8] = br#"{"post":"abc","reply_to":"xyz","text":"hei"}"#;
+    let key = "A".repeat(43);
+    let sha = sha256_hex(body);
+    for bits in [0u32, 1, 8, 12] {
+        let slow = (0u64..).find(|n| zero_bits(&pow_digest(w, &key, &sha, &n.to_string())) >= bits).unwrap().to_string();
+        assert_eq!(solve(w, &key, body, bits).unwrap(), slow);
+        assert_eq!(solve_hashed(w, &key, &sha, bits).unwrap(), slow);
+        let slow_board = (0u64..).find(|n| zero_bits(&board_pow_digest(&key, &sha, &n.to_string())) >= bits).unwrap().to_string();
+        assert_eq!(solve_board(&key, body, bits).unwrap(), slow_board);
+        assert_eq!(solve_board_hashed(&key, &sha, bits).unwrap(), slow_board);
+    }
+    assert!(solve_hashed(w, &key, &sha, 21).is_err(), "above the ceiling is refused, not attempted");
+}

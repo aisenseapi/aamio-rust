@@ -1,0 +1,31 @@
+[package]
+name = "aamio-wasm"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The aamio protocol core for JavaScript hosts, compiled to WebAssembly: proof of work as one call, and the same keys, signing, sealing and canonical gate as the Rust client. No transport."
+homepage = "https://aamio.at"
+repository = "https://github.com/aisenseapi/aamio-rust"
+# An npm package, built by build.py. Nothing here goes to crates.io.
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# The core alone: without `http` there is no ureq and no TLS, neither of which
+# exists where there are no sockets.
+aamio = { path = "..", default-features = false }
+wasm-bindgen = "0.2"
+serde_json = "1"
+# wasm32-unknown-unknown has no randomness of its own. This is the line that
+# connects every OsRng in the core to crypto.getRandomValues; without it the
+# build fails rather than seal with a nonce from nowhere.
+getrandom = { version = "0.2", features = ["js"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

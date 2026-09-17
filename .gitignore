@@ -1,2 +1,6 @@
 target/
 Cargo.lock
+# The wasm crate is an application, not a library: its lock file names the
+# wasm-bindgen version the CLI has to match, so it is kept.
+!wasm/Cargo.lock
+wasm/pkg/

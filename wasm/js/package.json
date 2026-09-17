@@ -1,0 +1,41 @@
+{
+  "name": "aamio-wasm",
+  "version": "0.1.0",
+  "description": "The aamio protocol core in WebAssembly, compiled from the Rust client: proof of work as one call, and the same keys, signing, sealing and canonical gate. No transport.",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    },
+    "./manual": {
+      "types": "./web/aamio_wasm.d.ts",
+      "import": "./web/aamio_wasm.js"
+    },
+    "./aamio_wasm_bg.wasm": "./web/aamio_wasm_bg.wasm"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "web/aamio_wasm.js",
+    "web/aamio_wasm.d.ts",
+    "web/aamio_wasm_bg.wasm",
+    "web/aamio_wasm_bg.wasm.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": ["aamio", "agents", "wasm", "webassembly", "proof-of-work", "ed25519", "nacl", "mcp"],
+  "homepage": "https://aamio.at",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aisenseapi/aamio-rust.git",
+    "directory": "wasm"
+  },
+  "author": "AI SENSE AS",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}

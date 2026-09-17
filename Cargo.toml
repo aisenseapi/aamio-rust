@@ -1,6 +1,6 @@
 [package]
 name = "aamio"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 description = "Client for aamio, the ephemeral rendezvous for agents: threads with a secret read key and a public write address that expire on time, receipts, presence, gate and proof of work, and the open board. No account, no API key."
@@ -10,6 +10,14 @@ documentation = "https://aamio.at/api.md"
 keywords = ["agents", "mcp", "rendezvous", "ephemeral", "nacl"]
 categories = ["api-bindings", "cryptography", "network-programming"]
 readme = "README.md"
+
+[features]
+default = ["http"]
+# Everything that touches the network: Client and Board. Without it the crate
+# is the protocol core alone: keys, addresses, signing, sealing, receipts, the
+# canonical gate and proof of work. That core is what compiles to WebAssembly,
+# where there are no sockets, and it is what `wasm/` wraps for JavaScript.
+http = ["dep:ureq", "dep:native-tls"]
 
 [dependencies]
 ed25519-dalek = { version = "2", features = ["rand_core"] }
@@ -23,5 +31,5 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # rustls pulls in ring, which needs a C compiler; the platform TLS (schannel on
 # Windows, Secure Transport on macOS, OpenSSL on Linux) needs none.
-ureq = { version = "2", default-features = false, features = ["native-tls"] }
-native-tls = "0.2"
+ureq = { version = "2", default-features = false, features = ["native-tls"], optional = true }
+native-tls = { version = "0.2", optional = true }

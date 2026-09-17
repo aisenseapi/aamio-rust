@@ -79,9 +79,16 @@ impl Keys {
 
     /// The envelope, as JSON text, sealed to the recipient's key. The recipient opens it with our public key.
     pub fn seal(&self, recipient_key: &str, plaintext: &[u8]) -> Result<String, String> {
-        let peer = curve_public(recipient_key)?;
         let mut nonce_bytes = [0u8; 24];
         rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
+        self.seal_with_nonce(recipient_key, plaintext, nonce_bytes)
+    }
+
+    /// `seal` with the nonce brought by the caller: for a host that has its own
+    /// source of randomness, and for reproducing a vector byte for byte. A nonce
+    /// is used once: never pass the same one twice between the same two keys.
+    pub fn seal_with_nonce(&self, recipient_key: &str, plaintext: &[u8], nonce_bytes: [u8; 24]) -> Result<String, String> {
+        let peer = curve_public(recipient_key)?;
         let nonce = Nonce::from(nonce_bytes);
         let salsa = SalsaBox::new(&PublicKey::from(peer), &SecretKey::from(self.curve_secret));
         let ct = salsa.encrypt(&nonce, plaintext).map_err(|_| "sealing failed".to_string())?;

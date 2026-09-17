@@ -5,6 +5,7 @@
 //! inbox ask for.
 
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 
 use crate::codec::{sha256, sha256_hex};
 
@@ -82,30 +83,61 @@ pub fn is_nonce(s: &str) -> bool {
 
 /// The first nonce, counting from 0, whose thread digest reaches `bits`.
 pub fn solve(w: &str, key: &str, body: &[u8], bits: u32) -> Result<String, String> {
+    solve_hashed(w, key, &sha256_hex(body), bits)
+}
+
+/// `solve` for a caller that already holds the body's sha256 as lowercase hex,
+/// which a client that signs does: the signing input is taken over the same hash.
+pub fn solve_hashed(w: &str, key: &str, body_sha256: &str, bits: u32) -> Result<String, String> {
     if bits > REQUIRE_MAX_BITS {
         return Err(format!("work is 0 to {} bits", REQUIRE_MAX_BITS));
     }
-    let prefix = format!("aamio-pow-v1\n{}\n{}\n{}\n", w, key, sha256_hex(body));
-    Ok(first_nonce(&prefix, bits))
+    Ok(first_nonce(&format!("aamio-pow-v1\n{}\n{}\n{}\n", w, key, body_sha256), bits))
 }
 
 /// The first nonce whose board digest reaches `bits`, over the exact text posted.
 pub fn solve_board(key: &str, body: &[u8], bits: u32) -> Result<String, String> {
+    solve_board_hashed(key, &sha256_hex(body), bits)
+}
+
+/// `solve_board` for a caller that already holds the body's sha256.
+pub fn solve_board_hashed(key: &str, body_sha256: &str, bits: u32) -> Result<String, String> {
     if bits > REQUIRE_MAX_BITS {
         return Err(format!("work is 0 to {} bits", REQUIRE_MAX_BITS));
     }
-    let prefix = format!("aamio-board-pow-v1\n{}\n{}\n", key, sha256_hex(body));
-    Ok(first_nonce(&prefix, bits))
+    Ok(first_nonce(&format!("aamio-board-pow-v1\n{}\n{}\n", key, body_sha256), bits))
 }
 
+/// Counts from 0, so every client finds the same nonce. The prefix is hashed
+/// once and its state reused, so a candidate costs the last block alone, and
+/// the digits are written into a buffer on the stack: a million candidates
+/// allocate nothing. The whole search is one call, which is what makes it
+/// worth compiling to WebAssembly: a host crosses into it once, not per hash.
 fn first_nonce(prefix: &str, bits: u32) -> String {
+    let base = Sha256::new_with_prefix(prefix.as_bytes());
+    let mut digits = [0u8; 20];
     let mut n: u64 = 0;
     loop {
-        let candidate = n.to_string();
-        if zero_bits(&sha256(format!("{}{}", prefix, candidate).as_bytes())) >= bits {
-            return candidate;
+        let start = write_decimal(n, &mut digits);
+        let mut hasher = base.clone();
+        hasher.update(&digits[start..]);
+        if zero_bits(&hasher.finalize()) >= bits {
+            return String::from_utf8_lossy(&digits[start..]).into_owned();
         }
         n += 1;
+    }
+}
+
+/// `n` in decimal at the end of `out`; returns where it starts.
+fn write_decimal(mut n: u64, out: &mut [u8; 20]) -> usize {
+    let mut i = out.len();
+    loop {
+        i -= 1;
+        out[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            return i;
+        }
     }
 }
 
