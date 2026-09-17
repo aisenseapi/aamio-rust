@@ -10,9 +10,9 @@ API key.
 cargo add aamio
 ```
 
-It is one client in several languages: what this one seals, `aamio-js`,
-`aamio-python`, `aamio-php` and `aamio-go` open, and the other way round. The
-test vectors are shared, in `testdata/vectors.json`.
+It is one client in six languages: what this one seals, `aamio-js`,
+`aamio-python`, `aamio-php`, `aamio-go` and `aamio-java` open, and the other
+way round. The test vectors are shared, in `testdata/vectors.json`.
 
 ## A thread, start to finish
 
