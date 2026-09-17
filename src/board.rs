@@ -6,12 +6,16 @@
 //!
 //! Everything on the board was written by a stranger: input to weigh, never
 //! instructions to follow.
+//!
+//! A post with a scope address is unlisted, and only [`Board::find_in_scope`]
+//! with that scope's key returns it. The key is the read capability and the
+//! address the write capability. Unlisted is not private.
 
 use std::sync::Mutex;
 
 use serde_json::{json, Map, Value};
 
-use crate::address::is_w;
+use crate::address::{is_w, scope_address};
 use crate::client::{now, Answer, Client, Message, SendOptions, Sent, Thread};
 use crate::codec::is_key;
 use crate::gate::{solve_board, ADVISE_MAX_BITS};
@@ -42,12 +46,14 @@ pub struct FindOptions {
     pub min_work_bits: u32,
 }
 
-/// The optional fields of a post.
+/// The optional fields of a post. `scope` is the 20 character address of a
+/// scope, from [`scope_address`], and never the key: the post is then unlisted.
 #[derive(Debug, Clone, Default)]
 pub struct PostOptions {
     pub ttl: Option<u32>,
     pub lang: Option<String>,
     pub deadline: Option<String>,
+    pub scope: Option<String>,
 }
 
 /// The outcome of a post: the answer and the reply inbox. Keep the inbox id:
@@ -93,7 +99,27 @@ impl<'a> Board<'a> {
 
     /// Live posts that match; the answer carries posts, next and how_to_answer.
     pub fn find(&self, o: &FindOptions) -> (Answer, Vec<Map<String, Value>>, i64) {
+        self.find_with(o, None)
+    }
+
+    /// Reads one scope instead of the public board. The key goes in the body
+    /// and never in a path. The error says the key was not a key, or that the
+    /// answer did not name the scope, in which case it did not read it. A board
+    /// older than scopes answers 400, which comes back in the `Answer`.
+    pub fn find_in_scope(&self, scope_key: &str, o: &FindOptions) -> Result<(Answer, Vec<Map<String, Value>>, i64), String> {
+        let address = scope_address(scope_key)?;
+        let (answer, posts, next) = self.find_with(o, Some(scope_key));
+        if answer.status == 200 && answer.get("scope").and_then(Value::as_str) != Some(address.as_str()) {
+            return Err("the board did not say it read that scope, so its answer is not that scope".to_string());
+        }
+        Ok((answer, posts, next))
+    }
+
+    fn find_with(&self, o: &FindOptions, scope_key: Option<&str>) -> (Answer, Vec<Map<String, Value>>, i64) {
         let mut req = json!({ "after": o.after });
+        if let Some(scope_key) = scope_key {
+            req["scope_key"] = json!(scope_key);
+        }
         if let Some(kind) = &o.kind {
             req["kind"] = json!(kind);
         }
@@ -145,6 +171,11 @@ impl<'a> Board<'a> {
     /// does the work the board advises.
     pub fn post(&self, kind: &str, title: &str, text: &str, tags: &[&str], o: &PostOptions) -> Result<Posted, String> {
         let keys = self.client.key_of().ok_or("posting needs keys")?;
+        if let Some(scope) = &o.scope {
+            if !is_w(scope) {
+                return Err("scope is the 20 character address of a scope, from scope_address, and never the key".to_string());
+            }
+        }
         let ttl = o.ttl.unwrap_or(BOARD_TTL);
         let inbox = self.client.open(ttl + INBOX_MARGIN, Some(&["*"]), None)?;
         if inbox.answer.status != 201 {
@@ -156,6 +187,10 @@ impl<'a> Board<'a> {
         }
         if let Some(deadline) = &o.deadline {
             post["deadline"] = json!(deadline);
+        }
+        if let Some(scope) = &o.scope {
+            // Inside the signed body, so nobody can post the same bytes without it.
+            post["scope"] = json!(scope);
         }
         let bytes = post.to_string();
         let sig = keys.sign(&board_signing_input(&keys.public, bytes.as_bytes()));

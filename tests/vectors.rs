@@ -39,6 +39,19 @@ fn addresses() {
 }
 
 #[test]
+fn scopes() {
+    let v = vectors();
+    let key = s(&v, &["scope", "key"]);
+    assert_eq!(scope_address(key).unwrap(), s(&v, &["scope", "address"]));
+    assert_eq!(w(key).unwrap(), s(&v, &["scope", "thread_w_of_the_same_string"]), "the thread address of the same string is another");
+    let fresh = new_scope_key();
+    assert!(fresh.len() == 26 && is_scope_key(&fresh));
+    let address = scope_address(&fresh).unwrap();
+    assert!(is_w(&address) && !is_scope_key(&address), "an address is never a key");
+    assert!(scope_address(s(&v, &["scope", "address"])).is_err(), "an address is refused where the key goes");
+}
+
+#[test]
 fn keys() {
     let v = vectors();
     let a = Keys::from_seed_hex(s(&v, &["a", "seed"])).unwrap();

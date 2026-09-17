@@ -40,3 +40,25 @@ pub fn w(id: &str) -> Result<String, String> {
     }
     Ok(base32(&sha256(id.as_bytes()))[..20].to_string())
 }
+
+/// A scope key, the read capability of a scope: 26 characters of `[a-z0-9]`
+/// from the OS CSPRNG, like a read key. The board checks only its form, so a
+/// key someone chose is a key someone else can guess.
+pub fn new_scope_key() -> String {
+    new_id_length(26).expect("26 is within 20 to 64")
+}
+
+/// Whether `s` has the shape of a scope key: 26 to 64 characters of `[a-z0-9]`.
+pub fn is_scope_key(s: &str) -> bool {
+    (26..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+}
+
+/// The write capability of a scope: the first 20 characters of the lowercase
+/// base32 of sha256("aamio-scope-v1\n" + key). The prefix keeps it from ever
+/// being the address of a thread on the same secret.
+pub fn scope_address(scope_key: &str) -> Result<String, String> {
+    if !is_scope_key(scope_key) {
+        return Err("a scope key is 26 to 64 characters of a-z and 0-9, never the 20 character address".to_string());
+    }
+    Ok(base32(&sha256(format!("aamio-scope-v1\n{}", scope_key).as_bytes()))[..20].to_string())
+}

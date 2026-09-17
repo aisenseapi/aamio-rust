@@ -36,7 +36,7 @@ pub mod hosts;
 pub mod keys;
 pub mod receipt;
 
-pub use address::{is_id, is_w, new_id, w};
+pub use address::{is_id, is_scope_key, is_w, new_id, new_scope_key, scope_address, w};
 pub use hosts::{DEFAULT_BOARD_HOST, DEFAULT_HOST};
 #[cfg(feature = "http")]
 pub use board::{Board, FindOptions, PostOptions, Posted, Reply};
