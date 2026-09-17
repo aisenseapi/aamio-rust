@@ -12,7 +12,7 @@ use serde_json::{json, Map, Value};
 use crate::address::{is_w, new_id, w as derive_w};
 use crate::codec::is_key;
 use crate::gate::{plan, solve, Plan};
-use crate::keys::{presence_delete_signing_input, presence_signing_input, thread_signing_input, Keys};
+use crate::keys::{presence_delete_signing_input, presence_signing_input, thread_signing_input, Keys, envelope_to};
 use crate::receipt::{verify_receipt, Check, Receipt};
 
 pub use crate::hosts::DEFAULT_HOST;
@@ -84,6 +84,11 @@ pub struct Sent {
     pub bytes: Vec<u8>,
     pub work: Option<String>,
     pub notes: Vec<String>,
+    /// True when this client refused to send at all, because the inbox asks
+    /// for something it cannot do. Nothing left the machine, so nothing can
+    /// have landed. A status of 0 alone means the opposite: no answer came
+    /// back and the request may be through.
+    pub stopped: bool,
 }
 
 /// One message as read, with the service's own fields around the body and,
@@ -201,7 +206,7 @@ impl Client {
             let mut b = Map::new();
             b.insert("error".into(), Value::String(stop));
             b.insert("fix".into(), Value::String("Open an address whose conditions this client can meet, or update the client.".into()));
-            return Ok(Sent { answer: Answer { status: 0, body: Some(b), text: String::new() }, bytes, work: None, notes: first.notes });
+            return Ok(Sent { answer: Answer { status: 0, body: Some(b), text: String::new() }, bytes, work: None, notes: first.notes, stopped: true });
         }
         let attempt = |bits: Option<u32>| -> Result<(Answer, Option<String>), String> {
             let mut headers: Vec<(&str, String)> = vec![("Content-Type", content_type.to_string())];
@@ -232,7 +237,7 @@ impl Client {
                 }
             }
         }
-        Ok(Sent { answer, bytes, work, notes })
+        Ok(Sent { answer, bytes, work, notes, stopped: false })
     }
 
     /// Reads with the read key from `after`, waiting up to `wait` seconds (25 at most).
@@ -277,20 +282,38 @@ impl Client {
         };
         let mut text = m.body.clone();
         if m.sealed {
-            m.format = "sealed-to-someone-else".to_string();
-            if let (Some(keys), Some(from)) = (&self.keys, &m.from) {
-                match keys.open(from, &m.body) {
-                    Ok(plain) => {
-                        let opened = String::from_utf8_lossy(&plain).to_string();
-                        text = opened.clone();
-                        m.opened = Some(opened);
-                        m.format = "sealed".to_string();
-                    }
-                    Err(e) => {
-                        m.format = "unreadable".to_string();
-                        m.error = Some(e);
-                    }
+            // The envelope names who it is sealed to, so read that rather than
+            // guess. This said "sealed to someone else" whenever the client had
+            // no keys or the message carried no sender, with no error beside
+            // the claim, and envelopes sealed to the reader were dropped on it.
+            let to = envelope_to(&m.body);
+            let mine = self.keys.as_ref().map(|k| k.hash_prefix.clone());
+            match (&to, &mine) {
+                (Some(to), Some(mine)) if to != mine => {
+                    m.format = "sealed-to-someone-else".to_string();
+                    m.error = Some(format!("this envelope is sealed to {}, not to {}", to, mine));
                 }
+                _ => match (&self.keys, &m.from) {
+                    (Some(keys), Some(from)) => match keys.open(from, &m.body) {
+                        Ok(plain) => {
+                            let opened = String::from_utf8_lossy(&plain).to_string();
+                            text = opened.clone();
+                            m.opened = Some(opened);
+                            m.format = "sealed".to_string();
+                        }
+                        Err(e) => {
+                            m.format = "unreadable".to_string();
+                            m.error = Some(e);
+                        }
+                    },
+                    _ => m.format = "sealed-unchecked".to_string(),
+                },
+            }
+            if m.format != "sealed" {
+                // Nothing was opened, so there is no payload here. json used
+                // to hold the envelope itself, and a caller reading "json is
+                // some" as "this was decoded" got the envelope instead.
+                return m;
             }
         }
         if let Ok(Value::Object(j)) = serde_json::from_str::<Value>(&text) {

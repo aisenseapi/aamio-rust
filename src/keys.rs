@@ -144,6 +144,16 @@ pub fn hash_prefix_of(key: &str) -> Result<String, String> {
 }
 
 /// Whether a body claims to be a sealed envelope.
+/// The recipient an envelope names, the first 8 hex of sha256 over their
+/// public key, or None when the body does not say. It answers the question a
+/// reader would otherwise guess at: is this sealed to me.
+pub fn envelope_to(body: &str) -> Option<String> {
+    match serde_json::from_str::<Envelope>(body) {
+        Ok(e) if e.e2ee == ENVELOPE && !e.to.is_empty() => Some(e.to),
+        _ => None,
+    }
+}
+
 pub fn is_envelope(body: &str) -> bool {
     match serde_json::from_str::<Envelope>(body) {
         Ok(e) => e.e2ee == ENVELOPE && !e.nonce.is_empty() && !e.ct.is_empty(),

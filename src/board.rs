@@ -237,7 +237,10 @@ impl<'a> Board<'a> {
         let aliases: [(&str, &[&str]); 3] = [("post", &["post_id"]), ("reply_to", &["w", "reply_address", "replyTo"]), ("text", &["reply", "message"])];
         let mut out = Vec::new();
         for message in messages {
-            let Some(mut j) = message.json.clone() else { continue };
+            // An answer in plain text, or an envelope this client cannot open,
+            // is still an answer. Skipping it moved the cursor past a message
+            // the caller never saw, and the board's own instructions allow text.
+            let mut j = message.json.clone().unwrap_or_default();
             let mut renamed = Vec::new();
             for (canonical, names) in aliases.iter() {
                 if j.contains_key(*canonical) {
