@@ -32,10 +32,12 @@ pub mod board;
 pub mod client;
 pub mod codec;
 pub mod gate;
+pub mod hosts;
 pub mod keys;
 pub mod receipt;
 
 pub use address::{is_id, is_w, new_id, w};
+pub use hosts::{DEFAULT_BOARD_HOST, DEFAULT_HOST};
 #[cfg(feature = "http")]
 pub use board::{Board, FindOptions, PostOptions, Posted, Reply};
 #[cfg(feature = "http")]

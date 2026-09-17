@@ -15,8 +15,7 @@ use crate::gate::{plan, solve, Plan};
 use crate::keys::{presence_delete_signing_input, presence_signing_input, thread_signing_input, Keys};
 use crate::receipt::{verify_receipt, Check, Receipt};
 
-/// The public instance.
-pub const DEFAULT_HOST: &str = "https://aamio.at";
+pub use crate::hosts::DEFAULT_HOST;
 /// The thread lifetime the service uses when none is given.
 pub const DEFAULT_TTL: u32 = 600;
 const USER_AGENT: &str = concat!("aamio-rust/", env!("CARGO_PKG_VERSION"));
@@ -113,7 +112,7 @@ pub struct Client {
 }
 
 impl Client {
-    /// A client for a host (`None` is https://aamio.at); keys may be `None` for reads and unsigned writes.
+    /// A client for a host, `None` being [`DEFAULT_HOST`]. Keys may be `None` for reads and unsigned writes.
     pub fn new(host: Option<&str>, keys: Option<Keys>) -> Client {
         let tls = native_tls::TlsConnector::new().expect("the platform TLS is available");
         let agent = ureq::AgentBuilder::new().tls_connector(std::sync::Arc::new(tls)).timeout_connect(Duration::from_secs(15)).timeout(Duration::from_secs(70)).user_agent(USER_AGENT).build();

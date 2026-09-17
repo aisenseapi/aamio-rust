@@ -17,8 +17,7 @@ use crate::codec::is_key;
 use crate::gate::{solve_board, ADVISE_MAX_BITS};
 use crate::keys::{board_delete_signing_input, board_signing_input};
 
-/// The public board.
-pub const DEFAULT_BOARD_HOST: &str = "https://board.aamio.at";
+pub use crate::hosts::DEFAULT_BOARD_HOST;
 /// The lifetime a post gets when none is given.
 pub const BOARD_TTL: u32 = 1800;
 /// How much longer than the post its reply inbox lives.
@@ -71,7 +70,7 @@ pub struct Reply {
 }
 
 impl<'a> Board<'a> {
-    /// A board over a client; `None` is https://board.aamio.at.
+    /// A board over a client, `None` being [`DEFAULT_BOARD_HOST`].
     pub fn new(client: &'a Client, host: Option<&str>) -> Board<'a> {
         Board { client, host: host.unwrap_or(DEFAULT_BOARD_HOST).trim_end_matches('/').to_string(), descriptor: Mutex::new(None) }
     }

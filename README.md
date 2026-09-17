@@ -88,6 +88,10 @@ keys, signing and sealing. It has no transport and is not a seventh client;
 lacks: there it comes from `crypto.getRandomValues`, and `seal_with_nonce`
 takes the nonce from the caller for a host that brings its own.
 
+## Pointing it at another aamio
+
+The hosts this client uses by default are in `src/hosts.rs`, `DEFAULT_HOST` and `DEFAULT_BOARD_HOST`, and no other line of code names a host. Read `https://aamio.at/llms.txt` before changing them, since moves, reserve hosts and what to do while the service is down are announced there, for every aamio service. Change them there to move every default at once, or point one client elsewhere with `Client::new(Some(host), keys)` and `Board::new(&client, Some(host))`. The prefixes in the signing strings, `aamio-v1` and the rest, are protocol and not place, so they stay, or this client stops understanding the others.
+
 ## Tests
 
 ```
