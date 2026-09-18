@@ -2,7 +2,12 @@
 //! proof of work, and the plan a client follows before writing to an inbox
 //! that sets conditions. The ceilings are the service's own, so an inbox run
 //! by a stranger can never make this client spend more CPU than aamio lets any
-//! inbox ask for.
+//! inbox ask for. 32 bits is for an inbox that means to meet only writers with
+//! real compute, so the plan weighs the work against the time the inbox has
+//! left and says no before it starts, rather than learning it from a 410.
+
+use std::sync::OnceLock;
+use std::time::Instant;
 
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -10,7 +15,9 @@ use sha2::{Digest, Sha256};
 use crate::codec::{sha256, sha256_hex};
 
 /// The most work an inbox may require.
-pub const REQUIRE_MAX_BITS: u32 = 20;
+pub const REQUIRE_MAX_BITS: u32 = 32;
+/// Below this the work is a second or so, and not worth timing first.
+const ESTIMATE_FROM_BITS: u32 = 17;
 /// The most work a client does without asking.
 pub const ADVISE_MAX_BITS: u32 = 18;
 
@@ -95,6 +102,56 @@ pub fn solve_hashed(w: &str, key: &str, body_sha256: &str, bits: u32) -> Result<
     Ok(first_nonce(&format!("aamio-pow-v1\n{}\n{}\n{}\n", w, key, body_sha256), bits))
 }
 
+/// `solve` with a deadline: `Ok(None)` when it passes first. Past the life of
+/// the inbox the work buys nothing, and 32 bits can run for hours.
+pub fn solve_until(w: &str, key: &str, body: &[u8], bits: u32, deadline: Option<Instant>) -> Result<Option<String>, String> {
+    if bits > REQUIRE_MAX_BITS {
+        return Err(format!("work is 0 to {} bits", REQUIRE_MAX_BITS));
+    }
+    Ok(first_nonce_until(&format!("aamio-pow-v1\n{}\n{}\n{}\n", w, key, sha256_hex(body)), bits, deadline))
+}
+
+static RATE: OnceLock<f64> = OnceLock::new();
+
+/// Attempts a second the search makes on this machine, timed once and kept.
+/// The estimate before long work is only as good as this number, so it is the
+/// search's own loop that is timed, for a quarter of a second.
+pub fn hash_rate() -> f64 {
+    *RATE.get_or_init(|| {
+        let base = Sha256::new_with_prefix(format!("aamio-pow-v1\ncalibration\n\n{}\n", "0".repeat(64)).as_bytes());
+        let mut digits = [0u8; 20];
+        let mut count: u64 = 0;
+        let start = Instant::now();
+        while start.elapsed().as_secs_f64() < 0.25 {
+            for _ in 0..4096 {
+                let at = write_decimal(count, &mut digits);
+                let mut hasher = base.clone();
+                hasher.update(&digits[at..]);
+                std::hint::black_box(zero_bits(&hasher.finalize()));
+                count += 1;
+            }
+        }
+        count as f64 / start.elapsed().as_secs_f64()
+    })
+}
+
+/// How long `bits` of work takes here on average. A lottery: one in a
+/// hundred takes about 4.6 times as long.
+pub fn expected_seconds(bits: u32) -> f64 {
+    2f64.powi(bits as i32) / hash_rate()
+}
+
+/// A time in seconds as a person would say it.
+pub fn describe_seconds(seconds: f64) -> String {
+    if seconds < 90.0 {
+        format!("{} seconds", seconds.round().max(1.0) as u64)
+    } else if seconds < 5400.0 {
+        format!("{} minutes", (seconds / 60.0).round() as u64)
+    } else {
+        format!("{:.1} hours", seconds / 3600.0)
+    }
+}
+
 /// The first nonce whose board digest reaches `bits`, over the exact text posted.
 pub fn solve_board(key: &str, body: &[u8], bits: u32) -> Result<String, String> {
     solve_board_hashed(key, &sha256_hex(body), bits)
@@ -114,6 +171,13 @@ pub fn solve_board_hashed(key: &str, body_sha256: &str, bits: u32) -> Result<Str
 /// allocate nothing. The whole search is one call, which is what makes it
 /// worth compiling to WebAssembly: a host crosses into it once, not per hash.
 fn first_nonce(prefix: &str, bits: u32) -> String {
+    first_nonce_until(prefix, bits, None).expect("without a deadline the search ends only with a nonce")
+}
+
+/// `first_nonce`, stopping when `deadline` passes. The clock is looked at every
+/// 65536 candidates, and never without a deadline, so the search compiled to
+/// WebAssembly, where there is no clock to read, never asks for one.
+fn first_nonce_until(prefix: &str, bits: u32, deadline: Option<Instant>) -> Option<String> {
     let base = Sha256::new_with_prefix(prefix.as_bytes());
     let mut digits = [0u8; 20];
     let mut n: u64 = 0;
@@ -122,9 +186,14 @@ fn first_nonce(prefix: &str, bits: u32) -> String {
         let mut hasher = base.clone();
         hasher.update(&digits[start..]);
         if zero_bits(&hasher.finalize()) >= bits {
-            return String::from_utf8_lossy(&digits[start..]).into_owned();
+            return Some(String::from_utf8_lossy(&digits[start..]).into_owned());
         }
         n += 1;
+        if let Some(deadline) = deadline {
+            if n & 0xFFFF == 0 && Instant::now() > deadline {
+                return None;
+            }
+        }
     }
 }
 
@@ -152,6 +221,8 @@ pub struct Plan {
     pub stop: Option<String>,
     /// What was passed over.
     pub notes: Vec<String>,
+    /// How long the required work takes here, when a time left was given.
+    pub expected_seconds: f64,
 }
 
 fn bits_of(condition: &Value) -> u32 {
@@ -160,6 +231,13 @@ fn bits_of(condition: &Value) -> u32 {
 
 /// Reads a gate and decides. `None` or an empty gate is nothing to do.
 pub fn plan(gate: Option<&Value>) -> Plan {
+    plan_within(gate, None)
+}
+
+/// `plan`, weighed against `seconds_left`, how long the inbox still takes
+/// writes, from X-Seconds-Left on its gate. Work that would not be done by
+/// then is not started.
+pub fn plan_within(gate: Option<&Value>, seconds_left: Option<f64>) -> Plan {
     let mut plan = Plan::default();
     let Some(Value::Object(gate)) = gate else { return plan };
     if gate.is_empty() {
@@ -177,6 +255,14 @@ pub fn plan(gate: Option<&Value>) -> Plan {
                 if bits > REQUIRE_MAX_BITS {
                     plan.stop = Some(format!("the inbox requires {} bits of work, above the {} aamio lets an inbox ask for; nothing was sent", bits, REQUIRE_MAX_BITS));
                     return plan;
+                }
+                if let Some(left) = seconds_left {
+                    let expected = if bits >= ESTIMATE_FROM_BITS { expected_seconds(bits) } else { 0.0 };
+                    if expected > left {
+                        plan.stop = Some(format!("the inbox requires {} bits of work, which takes about {} on this machine, and it takes writes for {} more. The work would not be done before it closes, so it was not started and nothing was sent. Ask the owner for a longer inbox or less work, or send from a machine with more compute", bits, describe_seconds(expected), describe_seconds(left)));
+                        return plan;
+                    }
+                    plan.expected_seconds = expected;
                 }
                 plan.bits = Some(plan.bits.unwrap_or(0).max(bits));
             }

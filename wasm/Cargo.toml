@@ -1,6 +1,6 @@
 [package]
 name = "aamio-wasm"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 description = "The aamio protocol core for JavaScript hosts, compiled to WebAssembly: proof of work as one call, and the same keys, signing, sealing and canonical gate as the Rust client. No transport."

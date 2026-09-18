@@ -166,13 +166,14 @@ fn the_plan() {
     assert!(p.bits.is_none() && p.notes.len() == 1, "advised 19 bits are passed over with a note");
     let p = plan(Some(&json!({"require":{"pow":{"bits":20,"covers":1},"per_key":3,"write_until":1800000000}})));
     assert!(p.bits == Some(20) && p.stop.is_none(), "required 20 bits are done; per_key and write_until are known");
-    let p = plan(Some(&json!({"require":{"pow":{"bits":21}}})));
-    assert!(p.stop.unwrap().contains("21"));
+    let p = plan(Some(&json!({"require":{"pow":{"bits":33}}})));
+    let stop = p.stop.unwrap();
+    assert!(stop.contains("33") && stop.contains("32"));
     let p = plan(Some(&json!({"require":{"captcha":true}})));
     assert!(p.stop.unwrap().contains("captcha"));
     let p = plan(Some(&json!({"advise":{"captcha":true,"pow":{"bits":8}}})));
     assert!(p.stop.is_none() && p.bits == Some(8) && p.notes.len() == 1);
-    assert_eq!((REQUIRE_MAX_BITS, ADVISE_MAX_BITS), (20, 18));
+    assert_eq!((REQUIRE_MAX_BITS, ADVISE_MAX_BITS), (32, 18));
 }
 
 #[test]
@@ -199,5 +200,5 @@ fn the_solver_finds_the_nonce_the_slow_way_finds() {
         assert_eq!(solve_board(&key, body, bits).unwrap(), slow_board);
         assert_eq!(solve_board_hashed(&key, &sha, bits).unwrap(), slow_board);
     }
-    assert!(solve_hashed(w, &key, &sha, 21).is_err(), "above the ceiling is refused, not attempted");
+    assert!(solve_hashed(w, &key, &sha, 33).is_err(), "above the ceiling is refused, not attempted");
 }

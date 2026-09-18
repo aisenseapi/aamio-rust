@@ -11,7 +11,7 @@ use serde_json::{json, Map, Value};
 
 use crate::address::{is_w, new_id, w as derive_w};
 use crate::codec::is_key;
-use crate::gate::{plan, solve, Plan};
+use crate::gate::{plan_within, solve_until, Plan};
 use crate::keys::{presence_delete_signing_input, presence_signing_input, thread_signing_input, Keys, envelope_to};
 use crate::receipt::{verify_receipt, Check, Receipt};
 
@@ -114,6 +114,8 @@ pub struct Client {
     pub keys: Option<Keys>,
     agent: ureq::Agent,
     gates: Mutex<HashMap<String, Option<Value>>>,
+    /// X-Seconds-Left per address, and when it was read.
+    gate_left: Mutex<HashMap<String, (f64, std::time::Instant)>>,
 }
 
 impl Client {
@@ -121,11 +123,16 @@ impl Client {
     pub fn new(host: Option<&str>, keys: Option<Keys>) -> Client {
         let tls = native_tls::TlsConnector::new().expect("the platform TLS is available");
         let agent = ureq::AgentBuilder::new().tls_connector(std::sync::Arc::new(tls)).timeout_connect(Duration::from_secs(15)).timeout(Duration::from_secs(70)).user_agent(USER_AGENT).build();
-        Client { host: host.unwrap_or(DEFAULT_HOST).trim_end_matches('/').to_string(), keys, agent, gates: Mutex::new(HashMap::new()) }
+        Client { host: host.unwrap_or(DEFAULT_HOST).trim_end_matches('/').to_string(), keys, agent, gates: Mutex::new(HashMap::new()), gate_left: Mutex::new(HashMap::new()) }
     }
 
     /// One HTTP call, decoded.
     pub fn call(&self, method: &str, url: &str, body: Option<&[u8]>, headers: &[(&str, &str)]) -> Answer {
+        self.call_reading(method, url, body, headers, "").0
+    }
+
+    /// `call`, also handing back one response header, which `Answer` does not keep.
+    fn call_reading(&self, method: &str, url: &str, body: Option<&[u8]>, headers: &[(&str, &str)], wanted: &str) -> (Answer, Option<String>) {
         let mut request = self.agent.request(method, url).set("Accept", "application/json");
         for (name, value) in headers {
             if !value.is_empty() {
@@ -139,15 +146,44 @@ impl Client {
         let response = match result {
             Ok(r) => r,
             Err(ureq::Error::Status(_, r)) => r,
-            Err(ureq::Error::Transport(t)) => return Answer::no_answer(t.to_string()),
+            Err(ureq::Error::Transport(t)) => return (Answer::no_answer(t.to_string()), None),
         };
         let status = response.status();
+        let header = if wanted.is_empty() { None } else { response.header(wanted).map(str::to_string) };
         let text = response.into_string().unwrap_or_default();
         let body = serde_json::from_str::<Value>(&text).ok().and_then(|v| match v {
             Value::Object(m) => Some(m),
             _ => None,
         });
-        Answer { status, body, text }
+        (Answer { status, body, text }, header)
+    }
+
+    /// Drops the gate kept for `w` and the time it said: they belong to an
+    /// inbox that may not be there now.
+    pub fn forget_gate(&self, w: &str) {
+        self.gates.lock().unwrap().remove(w);
+        self.gate_left.lock().unwrap().remove(w);
+    }
+
+    /// The plan for `w`'s gate, read again once before a no that rests on a
+    /// gate read earlier. A gate never changes while its thread lives, which
+    /// is why it is kept, but an address can have more than one life: the time
+    /// a kept gate said counted down to nothing and stayed there, and a new
+    /// inbox at the same address was refused on the old one's terms without
+    /// the service being asked.
+    pub fn plan_to(&self, w: &str) -> Plan {
+        let cached = self.gates.lock().unwrap().contains_key(w);
+        let plan = plan_within(self.gate(w, false).as_ref(), self.seconds_left(w));
+        if plan.stop.is_some() && cached {
+            self.forget_gate(w);
+            return plan_within(self.gate(w, false).as_ref(), self.seconds_left(w));
+        }
+        plan
+    }
+
+    /// How long `w` still takes writes, counted down from what its gate said.
+    pub fn seconds_left(&self, w: &str) -> Option<f64> {
+        self.gate_left.lock().unwrap().get(w).map(|(left, at)| (left - at.elapsed().as_secs_f64()).max(0.0))
     }
 
     // -------------------------------------------------------------- threads --
@@ -176,7 +212,12 @@ impl Client {
                 return cached.clone();
             }
         }
-        let answer = self.call("GET", &format!("{}/{}/gate", self.host, w), None, &[]);
+        let (answer, left) = self.call_reading("GET", &format!("{}/{}/gate", self.host, w), None, &[], "X-Seconds-Left");
+        // The time left rides in a header, since the body is the exact bytes
+        // the gate hash is taken over.
+        if let (200, Some(left)) = (answer.status, left.and_then(|l| l.trim().parse::<u64>().ok())) {
+            self.gate_left.lock().unwrap().insert(w.to_string(), (left as f64, std::time::Instant::now()));
+        }
         let gate = if answer.status == 200 { answer.body.map(Value::Object) } else { None };
         self.gates.lock().unwrap().insert(w.to_string(), gate.clone());
         gate
@@ -201,14 +242,15 @@ impl Client {
         }
         let signing = !opts.unsigned && self.keys.is_some();
         let key = if signing { self.keys.as_ref().unwrap().public.clone() } else { String::new() };
-        let first: Plan = plan(self.gate(w, false).as_ref());
+        let first: Plan = self.plan_to(w);
         if let Some(stop) = first.stop {
             let mut b = Map::new();
             b.insert("error".into(), Value::String(stop));
             b.insert("fix".into(), Value::String("Open an address whose conditions this client can meet, or update the client.".into()));
             return Ok(Sent { answer: Answer { status: 0, body: Some(b), text: String::new() }, bytes, work: None, notes: first.notes, stopped: true });
         }
-        let attempt = |bits: Option<u32>| -> Result<(Answer, Option<String>), String> {
+        // The third value is the bits whose work ran out of time, when it did.
+        let attempt = |bits: Option<u32>| -> Result<(Answer, Option<String>, Option<u32>), String> {
             let mut headers: Vec<(&str, String)> = vec![("Content-Type", content_type.to_string())];
             if signing {
                 headers.push(("X-Key", key.clone()));
@@ -216,26 +258,56 @@ impl Client {
             }
             let mut work = None;
             if let Some(bits) = bits.filter(|b| *b > 0) {
-                let nonce = solve(w, &key, &bytes, bits)?;
+                // The work stops when the inbox would close, less a few seconds
+                // for the post itself: past that a nonce buys nothing but a 410.
+                let deadline = self.seconds_left(w).map(|left| std::time::Instant::now() + Duration::from_secs_f64((left - 5.0).max(0.0)));
+                let Some(nonce) = solve_until(w, &key, &bytes, bits, deadline)? else {
+                    return Ok((Answer::default(), None, Some(bits)));
+                };
                 headers.push(("X-Work", nonce.clone()));
                 work = Some(nonce);
             }
             let borrowed: Vec<(&str, &str)> = headers.iter().map(|(n, v)| (*n, v.as_str())).collect();
-            Ok((self.call("POST", &format!("{}/{}", self.host, w), Some(&bytes), &borrowed), work))
+            Ok((self.call("POST", &format!("{}/{}", self.host, w), Some(&bytes), &borrowed), work, None))
         };
-        let (mut answer, mut work) = attempt(first.bits)?;
+        let stopped = |error: String, notes: Vec<String>| -> Sent {
+            let mut b = Map::new();
+            b.insert("error".into(), Value::String(error));
+            b.insert("fix".into(), Value::String("Ask the owner for a longer inbox or less work, or send from a machine with more compute.".into()));
+            Sent { answer: Answer { status: 0, body: Some(b), text: String::new() }, bytes: Vec::new(), work: None, notes, stopped: true }
+        };
+        let ran_out = |bits: u32| format!("the proof of work of {} bits was not done before the inbox stops taking writes, so the work was stopped and nothing was sent. The work is a lottery, and this time it took longer than the estimate", bits);
+        let (mut answer, mut work, out_of_time) = attempt(first.bits)?;
         let mut notes = first.notes;
+        if let Some(bits) = out_of_time {
+            return Ok(stopped(ran_out(bits), notes));
+        }
         if answer.status == 428 {
             if let Some(gate) = answer.get("gate").cloned() {
                 self.gates.lock().unwrap().insert(w.to_string(), Some(gate.clone()));
-                let again = plan(Some(&gate));
-                if again.stop.is_none() && again.bits.map_or(false, |b| b > 0) {
-                    let (a, wk) = attempt(again.bits)?;
+                if let Some(left) = answer.get("seconds_left").and_then(Value::as_u64) {
+                    self.gate_left.lock().unwrap().insert(w.to_string(), (left as f64, std::time::Instant::now()));
+                }
+                let again = plan_within(Some(&gate), self.seconds_left(w));
+                if let Some(stop) = again.stop {
+                    notes.extend(again.notes);
+                    return Ok(stopped(stop, notes));
+                }
+                if again.bits.map_or(false, |b| b > 0) {
+                    let (a, wk, out) = attempt(again.bits)?;
+                    if let Some(bits) = out {
+                        return Ok(stopped(ran_out(bits), notes));
+                    }
                     answer = a;
                     work = wk;
                     notes.extend(again.notes);
                 }
             }
+        }
+        // An inbox that is not there, or has expired, takes its gate with it:
+        // the next send here reads the gate of whatever is there then.
+        if answer.status == 404 || answer.status == 410 {
+            self.forget_gate(w);
         }
         Ok(Sent { answer, bytes, work, notes, stopped: false })
     }

@@ -72,7 +72,7 @@ let slowBoard = 0;
 while (aamio.zeroBits(aamio.boardPowDigest(key, sha, String(slowBoard))) < 12) slowBoard++;
 ok(aamio.solveBoardPow(key, sha, 12) === String(slowBoard), "solveBoardPow does too: " + slowBoard);
 ok(aamio.solvePow(w, key, sha, 0) === "0", "no bits asked is the first nonce");
-ok(throws(() => aamio.solvePow(w, key, sha, 21), "0 to 20"), "above the ceiling is refused, not attempted");
+ok(throws(() => aamio.solvePow(w, key, sha, 33), "0 to 32"), "above the ceiling, 32 since 18 September 2026, is refused, not attempted");
 ok(/^\d+\.\d+\.\d+$/.test(aamio.version()), "version " + aamio.version());
 
 console.log(`\n${passed} passed, ${failed} failed`);

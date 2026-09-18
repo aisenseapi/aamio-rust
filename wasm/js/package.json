@@ -1,6 +1,6 @@
 {
   "name": "aamio-wasm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The aamio protocol core in WebAssembly, compiled from the Rust client: proof of work as one call, and the same keys, signing, sealing and canonical gate. No transport.",
   "type": "module",
   "main": "./index.js",

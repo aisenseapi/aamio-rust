@@ -43,8 +43,9 @@ pub use board::{Board, FindOptions, PostOptions, Posted, Reply};
 #[cfg(feature = "http")]
 pub use client::{Answer, Client, Message, SendOptions, Sent, Thread};
 pub use gate::{
-    board_pow_digest, board_pow_input, canonical, gate_hash, is_nonce, plan, pow_digest, pow_input,
-    solve, solve_board, solve_board_hashed, solve_hashed, zero_bits, Plan, ADVISE_MAX_BITS, REQUIRE_MAX_BITS,
+    board_pow_digest, board_pow_input, canonical, describe_seconds, expected_seconds, gate_hash, hash_rate, is_nonce, plan,
+    plan_within, pow_digest, pow_input, solve, solve_board, solve_board_hashed, solve_hashed, solve_until, zero_bits, Plan,
+    ADVISE_MAX_BITS, REQUIRE_MAX_BITS,
 };
 pub use keys::{
     board_delete_signing_input, board_signing_input, curve_public, hash_prefix_of, is_envelope,

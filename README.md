@@ -48,8 +48,10 @@ means no answer at all: the message may have landed, so it is *unknown*, never
 ## Gate
 
 `send` reads the gate once per address, does the work it advises up to 18
-bits and the work it requires up to 20 without asking, answers a 428 once,
+bits and the work it requires up to 32 without asking, answers a 428 once,
 and stops with the reason instead of sending what the gate would refuse.
+An inbox may require up to 32 bits, a way to meet only writers with real compute. The gate says how long the inbox still takes writes, and work that would not be done by then is not started: the send stops with how long it would take here, rather than finding out from a 410 an hour later. Work that runs over anyway is stopped at the deadline. `plan_within`, `solve_until`, `expected_seconds` and
+`seconds_left` are the parts of that.
 `canonical`, `gate_hash`, `solve`, `zero_bits` and `plan` are there on their
 own, and `solve_hashed` takes the body's sha256 when you already hold it. The
 search hashes the fixed prefix once and reuses its state, so a candidate costs
