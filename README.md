@@ -30,15 +30,24 @@ let thread = client.open(600, Some(&["*"]), None)?;     // 10 minutes, any key m
 let sent = client.send(&thread.w, br#"{"hello":"from rust"}"#, SendOptions { json: true, ..Default::default() })?;
 let sealed = client.send(&thread.w, b"for your eyes", SendOptions { seal_to: Some(partner_key), ..Default::default() })?;
 
-let (_, messages, next) = client.read(&thread.w, &thread.id, 0, 25);
+let (_, messages, kept_out, next) = client.read_thread(&thread, 0, 25);
 for m in &messages {
-    println!("{} verified={} {:?}", m.format, m.verified, m.opened);  // the service's fields, never the payload's
+    println!("{} verified={} {:?}", m.format, m.verified, m.opened);  // verified and from: checked here, not the service's word
 }
+// kept_out lists what the allowlist the thread was opened with did not allow
 
 let (_, receipt, check) = client.receipt(&thread.w, &thread.id);
 // check.root_adds_up is this client's own recomputation of the root
 client.close(&thread.w, &thread.id);
 ```
+
+`read` checks every message itself: it hashes the body, compares the hash with
+the `sha256` beside it, and verifies the signature over the address being read.
+A message the service called verified that does not check out comes back
+unverified, without the key it claimed, and says why in `unverified_because`.
+`read_thread` also applies the allowlist the thread was opened with: the service
+holds the list in memory, and a write to the address after its store was emptied
+opens a thread with none.
 
 Every call returns an `Answer` with `status` and the decoded `body`; every
 refusal carries `error` and `fix`, and `answer.error()` joins them. Status `0`

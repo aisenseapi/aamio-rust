@@ -10,9 +10,9 @@ use std::time::Duration;
 use serde_json::{json, Map, Value};
 
 use crate::address::{is_w, new_id, w as derive_w};
-use crate::codec::is_key;
+use crate::codec::{is_key, sha256_hex};
 use crate::gate::{plan_within, solve_until, Plan};
-use crate::keys::{presence_delete_signing_input, presence_signing_input, thread_signing_input, Keys, envelope_to};
+use crate::keys::{presence_delete_signing_input, presence_signing_input, thread_signing_input, verify, Keys, envelope_to};
 use crate::receipt::{verify_receipt, Check, Receipt};
 
 pub use crate::hosts::DEFAULT_HOST;
@@ -58,12 +58,56 @@ impl Answer {
     }
 }
 
-/// An opened thread: keep `id`, share `w`.
+/// An opened thread: keep `id`, share `w`. `allow` is the allowlist it was
+/// opened with, kept here because the service holds it in memory only: see
+/// [`Client::read_thread`].
 #[derive(Debug, Clone)]
 pub struct Thread {
     pub id: String,
     pub w: String,
+    pub allow: Vec<String>,
     pub answer: Answer,
+}
+
+/// A message the thread's own allowlist kept out of what `read_thread` handed over.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeptOut {
+    pub seq: i64,
+    pub why: String,
+}
+
+/// Checks one message as the service returned it: the body is hashed and
+/// compared with the `sha256` beside it, and the signature verified over the
+/// address being read. `verified` in an answer is the service's word, and the
+/// trust model says an operator cannot forge a signature, which only holds for
+/// a reader that checks. The second value is `None` for a message that verified
+/// and for an ordinary unsigned one, and a sentence when something that should
+/// have held did not. The third is the hash of the body as computed here.
+pub fn check_message(w: &str, raw: &Map<String, Value>) -> (bool, Option<String>, Option<String>) {
+    let Some(body) = raw.get("body").and_then(Value::as_str) else {
+        return (false, Some("the message has no body to check".to_string()), None);
+    };
+    let digest = sha256_hex(body.as_bytes());
+    if raw.get("sha256").and_then(Value::as_str) != Some(digest.as_str()) {
+        return (false, Some("the body does not hash to the sha256 the service gave with it, so these are not the bytes that were stored".to_string()), Some(digest));
+    }
+    let from = raw.get("from").and_then(Value::as_str).unwrap_or("");
+    let signature = raw.get("sig").and_then(Value::as_str).unwrap_or("");
+    let claimed = raw.get("verified").and_then(Value::as_bool).unwrap_or(false);
+    if from.is_empty() || signature.is_empty() {
+        if claimed {
+            return (false, Some("the service calls it verified and gave no key or signature to check".to_string()), Some(digest));
+        }
+        return (false, None, Some(digest));
+    }
+    if verify(from, signature, &thread_signing_input(w, body.as_bytes())) {
+        return (true, None, Some(digest));
+    }
+    let mut why_not = "the signature does not check out for this key, this address and these bytes".to_string();
+    if claimed {
+        why_not.push_str(", though the service said it did");
+    }
+    (false, Some(why_not), Some(digest))
 }
 
 /// Options for a write.
@@ -106,6 +150,10 @@ pub struct Message {
     pub format: String,
     pub error: Option<String>,
     pub json: Option<Map<String, Value>>,
+    /// Set by `read` when something that should have held did not: the service
+    /// called the message verified, or gave its hash, and it does not check out
+    /// here. `verified` is then false and `from` is `None`.
+    pub unverified_because: Option<String>,
 }
 
 /// A client for one host, optionally with keys.
@@ -201,7 +249,7 @@ impl Client {
         }
         let body = gate.map(|g| json!({ "gate": g }).to_string());
         let answer = self.call("PUT", &format!("{}/{}", self.host, w), body.as_deref().map(str::as_bytes), &headers);
-        Ok(Thread { id, w, answer })
+        Ok(Thread { id, w, allow: allow.unwrap_or(&[]).iter().map(|key| key.to_string()).collect(), answer })
     }
 
     /// The conditions an inbox was opened with, read once per address unless
@@ -313,6 +361,12 @@ impl Client {
     }
 
     /// Reads with the read key from `after`, waiting up to `wait` seconds (25 at most).
+    ///
+    /// Every message is checked here before it is handed over: the body is
+    /// hashed and compared with the `sha256` beside it, and the signature is
+    /// verified over this address. `verified` and `from` on what comes back are
+    /// this client's result, not the service's word, and a message the service
+    /// called verified that does not check out says why in `unverified_because`.
     pub fn read(&self, w: &str, id: &str, after: i64, wait: u32) -> (Answer, Vec<Message>, i64) {
         let mut path = format!("/{}", w);
         if after > 0 || wait > 0 {
@@ -331,7 +385,7 @@ impl Client {
             if let Some(list) = answer.get("messages").and_then(Value::as_array) {
                 for item in list {
                     if let Value::Object(raw) = item {
-                        messages.push(self.decode(raw));
+                        messages.push(self.decode_at(w, raw));
                     }
                 }
             }
@@ -339,8 +393,60 @@ impl Client {
         (answer, messages, next)
     }
 
+    /// `read` for a thread this client opened, with the allowlist it was
+    /// opened with applied to what is read. The service enforces the list while
+    /// it holds the thread, and it holds it in memory: a write to the address
+    /// after its store was emptied opens a thread with no list. With named
+    /// keys, only messages verified here from one of them are handed over; with
+    /// `*`, only messages verified here from any key. The rest is listed as
+    /// kept out, never dropped in silence. The cursor covers both.
+    pub fn read_thread(&self, thread: &Thread, after: i64, wait: u32) -> (Answer, Vec<Message>, Vec<KeptOut>, i64) {
+        let (answer, messages, next) = self.read(&thread.w, &thread.id, after, wait);
+        if thread.allow.is_empty() {
+            return (answer, messages, Vec::new(), next);
+        }
+        let any_signed = thread.allow.iter().any(|key| key == "*");
+        let mut handed = Vec::new();
+        let mut kept = Vec::new();
+        for message in messages {
+            let allowed = message.verified && (any_signed || message.from.as_ref().map_or(false, |from| thread.allow.contains(from)));
+            if allowed {
+                handed.push(message);
+                continue;
+            }
+            let why = if any_signed {
+                "this thread was opened for signed messages only, and this one did not verify here"
+            } else {
+                "this thread was opened for named keys, and this one was not signed by one of them, as checked here"
+            };
+            kept.push(KeptOut { seq: message.seq, why: why.to_string() });
+        }
+        (answer, handed, kept, next)
+    }
+
+    /// `decode` for a message read at `w`: the hash and the signature are
+    /// checked first, and everything `decode` does goes by that result. A
+    /// message that does not verify here has no `from`, so a sealed body under
+    /// a forged sender is not opened against the key it claimed.
+    pub fn decode_at(&self, w: &str, raw: &Map<String, Value>) -> Message {
+        let (verified, why_not, digest) = check_message(w, raw);
+        let mut checked = raw.clone();
+        checked.insert("verified".into(), Value::Bool(verified));
+        if !verified {
+            checked.insert("from".into(), Value::Null);
+        }
+        if let Some(digest) = digest {
+            checked.insert("sha256".into(), Value::String(digest));
+        }
+        let mut message = self.decode(&checked);
+        message.unverified_because = why_not;
+        message
+    }
+
     /// One raw message into a `Message`, opened when it is sealed to us.
-    /// `verified`, `sealed` and `from` are the service's fields, never the payload's.
+    /// `verified`, `sealed` and `from` are never taken from the payload.
+    /// `decode` takes the service's fields as they are; `read` goes through
+    /// `decode_at`, which checks them first.
     pub fn decode(&self, raw: &Map<String, Value>) -> Message {
         let mut m = Message {
             seq: raw.get("seq").and_then(Value::as_i64).unwrap_or(0),
