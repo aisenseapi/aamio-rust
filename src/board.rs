@@ -232,7 +232,14 @@ impl<'a> Board<'a> {
 
     /// Answers on an inbox, decoded. Aliases `post_id`, `w`, `reply_address`,
     /// `replyTo`, `reply` and `message` are accepted and named under `renamed`.
-    pub fn replies(&self, w: &str, id: &str, after: i64, wait: u32, only_post: Option<&str>) -> (Answer, Vec<Reply>, i64) {
+    ///
+    /// Everything read is returned, answers to other posts included. There is
+    /// no post filter here, because a read that filters loses what it
+    /// filtered: the cursor returned is the service's, counted over every
+    /// message read, so a caller looping on it never sees the dropped ones
+    /// again and a library keeps no archive to find them in. Filter the
+    /// returned vector on `post`.
+    pub fn replies(&self, w: &str, id: &str, after: i64, wait: u32) -> (Answer, Vec<Reply>, i64) {
         let (answer, messages, next) = self.client.read(w, id, after, wait);
         let aliases: [(&str, &[&str]); 3] = [("post", &["post_id"]), ("reply_to", &["w", "reply_address", "replyTo"]), ("text", &["reply", "message"])];
         let mut out = Vec::new();
@@ -255,11 +262,6 @@ impl<'a> Board<'a> {
                 }
             }
             let post = j.get("post").and_then(Value::as_str).map(str::to_string);
-            if let Some(only) = only_post {
-                if post.as_deref() != Some(only) {
-                    continue;
-                }
-            }
             out.push(Reply {
                 post,
                 reply_to: j.get("reply_to").and_then(Value::as_str).map(str::to_string),

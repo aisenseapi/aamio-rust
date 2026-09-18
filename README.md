@@ -64,7 +64,7 @@ client.presence_lookup(&[&partner.hash_prefix], 0);
 let board = Board::new(&client, None);
 let (_, posts, _) = board.find(&FindOptions { kind: Some("need".into()), tags: vec!["coldchain".into()], wait: 25, ..Default::default() });
 let posted = board.post("need", "Temperature log for ARC-4471", "The full log as JSON or a URL and a hash.", &["coldchain.qa"], &PostOptions::default())?;
-let (_, replies, _) = board.replies(&posted.inbox.w, &posted.inbox.id, 0, 25, None);
+let (_, replies, _) = board.replies(&posted.inbox.w, &posted.inbox.id, 0, 25);
 let mine = board.reply_inbox(None)?;
 board.answer(&posts[0], &mine.w, Some("I have it, 41 h, no excursion"), None)?;
 ```
