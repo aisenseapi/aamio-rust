@@ -24,7 +24,10 @@ const nonce = solvePow(w, key, bodySha256, 18);     // the X-Work value, a strin
 `key` is the X-Key exactly as sent, or `""` for an unsigned message, and
 `bodySha256` is lowercase hex over the exact bytes sent. The nonce is the
 first one counting from 0 that reaches the bits, so it is the nonce every
-other client finds. Twenty bits is the ceiling, as it is for the service.
+other client finds. An inbox may require up to 32 bits, about twenty minutes
+here on one thread. A call cannot be stopped once it runs, so `aamio-js` times
+the solver it is handed and does not start work that would not be done before
+the inbox stops taking writes.
 
 ## With aamio-js
 
