@@ -74,6 +74,18 @@ pub struct Thread {
 pub struct KeptOut {
     pub seq: i64,
     pub why: String,
+    pub unverified_because: Option<String>,
+}
+
+fn normalize_allow<'a>(allow: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut out = Vec::new();
+    for entry in allow {
+        for part in entry.split(',') {
+            let key = part.trim().to_string();
+            if !key.is_empty() && !out.contains(&key) { out.push(key); }
+        }
+    }
+    if out.iter().any(|key| key == "*") { vec!["*".to_string()] } else { out }
 }
 
 /// Checks one message as the service returned it: the body is hashed and
@@ -239,17 +251,18 @@ impl Client {
     /// Opens a thread with a lifetime. `allow` lists signer keys, or `["*"]`
     /// for any key as long as the message is signed; `gate` sets conditions.
     pub fn open(&self, ttl: u32, allow: Option<&[&str]>, gate: Option<&Value>) -> Result<Thread, String> {
+        let allow = normalize_allow(allow.unwrap_or(&[]).iter().copied());
         let id = new_id();
         let w = derive_w(&id)?;
         let ttl_text = ttl.to_string();
-        let allow_text = allow.map(|a| a.join(",")).unwrap_or_default();
+        let allow_text = allow.join(",");
         let mut headers = vec![("X-Read", id.as_str()), ("X-TTL", ttl_text.as_str()), ("Content-Type", "application/json")];
-        if allow.is_some() {
+        if !allow.is_empty() {
             headers.push(("X-Allow", allow_text.as_str()));
         }
         let body = gate.map(|g| json!({ "gate": g }).to_string());
         let answer = self.call("PUT", &format!("{}/{}", self.host, w), body.as_deref().map(str::as_bytes), &headers);
-        Ok(Thread { id, w, allow: allow.unwrap_or(&[]).iter().map(|key| key.to_string()).collect(), answer })
+        Ok(Thread { id, w, allow, answer })
     }
 
     /// The conditions an inbox was opened with, read once per address unless
@@ -386,6 +399,8 @@ impl Client {
                 for item in list {
                     if let Value::Object(raw) = item {
                         messages.push(self.decode_at(w, raw));
+                    } else {
+                        messages.push(self.decode_at(w, &Map::new()));
                     }
                 }
             }
@@ -401,15 +416,16 @@ impl Client {
     /// `*`, only messages verified here from any key. The rest is listed as
     /// kept out, never dropped in silence. The cursor covers both.
     pub fn read_thread(&self, thread: &Thread, after: i64, wait: u32) -> (Answer, Vec<Message>, Vec<KeptOut>, i64) {
+        let allow = normalize_allow(thread.allow.iter().map(String::as_str));
         let (answer, messages, next) = self.read(&thread.w, &thread.id, after, wait);
-        if thread.allow.is_empty() {
+        if allow.is_empty() {
             return (answer, messages, Vec::new(), next);
         }
-        let any_signed = thread.allow.iter().any(|key| key == "*");
+        let any_signed = allow.iter().any(|key| key == "*");
         let mut handed = Vec::new();
         let mut kept = Vec::new();
         for message in messages {
-            let allowed = message.verified && (any_signed || message.from.as_ref().map_or(false, |from| thread.allow.contains(from)));
+            let allowed = message.verified && (any_signed || message.from.as_ref().map_or(false, |from| allow.contains(from)));
             if allowed {
                 handed.push(message);
                 continue;
@@ -419,7 +435,7 @@ impl Client {
             } else {
                 "this thread was opened for named keys, and this one was not signed by one of them, as checked here"
             };
-            kept.push(KeptOut { seq: message.seq, why: why.to_string() });
+            kept.push(KeptOut { seq: message.seq, why: why.to_string(), unverified_because: message.unverified_because });
         }
         (answer, handed, kept, next)
     }
@@ -429,6 +445,13 @@ impl Client {
     /// message that does not verify here has no `from`, so a sealed body under
     /// a forged sender is not opened against the key it claimed.
     pub fn decode_at(&self, w: &str, raw: &Map<String, Value>) -> Message {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.checked_decode(w, raw))).unwrap_or_else(|_| {
+            let reason = "the message could not be checked here".to_string();
+            Message { seq: raw.get("seq").and_then(Value::as_i64).unwrap_or(0), at: raw.get("at").and_then(Value::as_i64).unwrap_or(0), body: raw.get("body").and_then(Value::as_str).unwrap_or("").to_string(), format: "unreadable".to_string(), error: Some(reason.clone()), unverified_because: Some(reason), ..Default::default() }
+        })
+    }
+
+    fn checked_decode(&self, w: &str, raw: &Map<String, Value>) -> Message {
         let (verified, why_not, digest) = check_message(w, raw);
         let mut checked = raw.clone();
         checked.insert("verified".into(), Value::Bool(verified));
@@ -446,7 +469,8 @@ impl Client {
     /// One raw message into a `Message`, opened when it is sealed to us.
     /// `verified`, `sealed` and `from` are never taken from the payload.
     /// `decode` takes the service's fields as they are; `read` goes through
-    /// `decode_at`, which checks them first.
+    /// `decode_at`, which checks them first. UNSAFE for remotely supplied input:
+    /// this compatibility method is not a verification boundary.
     pub fn decode(&self, raw: &Map<String, Value>) -> Message {
         let mut m = Message {
             seq: raw.get("seq").and_then(Value::as_i64).unwrap_or(0),

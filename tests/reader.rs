@@ -16,6 +16,76 @@ use serde_json::{json, Map, Value};
 
 const W: &str = "iiiiiiiiiiiiiiiiiiii";
 
+#[test]
+fn normalized_open_and_board_policy_survive_the_server_echo() {
+    let alice = keys(1);
+    let mut forged = stored(W, 2, "forged", Some(&keys(9)));
+    forged["from"] = json!(alice.public);
+    let host = reading(vec![stored(W, 1, "unsigned", None), forged]);
+    let client = Client::new(Some(&host), Some(keys(1)));
+    let combined = format!(" {}, ", alice.public);
+    let mut opened = client.open(600, Some(&[&combined, "", &alice.public]), None).unwrap();
+    assert_eq!(opened.allow, vec![alice.public.clone()]);
+    opened.w = W.to_string();
+    let board = Board::new(&client, Some(&host));
+    let (_, replies, kept, next) = board.replies_thread(&opened, 0, 0);
+    assert!(replies.is_empty());
+    assert_eq!(kept.len(), 2);
+    assert!(kept[1].unverified_because.as_deref().unwrap().contains("though the service said it did"));
+    assert_eq!(next, 2);
+    assert_eq!(board.replies(W, &opened.id, 0, 0).1.len(), 2, "compatibility overload remains listless");
+    assert_eq!(board.reply_inbox(None).unwrap().allow, vec!["*"]);
+    assert_eq!(board.post("need", "local", "only", &[], &PostOptions::default()).unwrap().inbox.allow, vec!["*"]);
+    assert!(client.open(600, Some(&[" ", ""]), None).unwrap().allow.is_empty());
+    assert_eq!(client.open(600, Some(&["a", " * "]), None).unwrap().allow, vec!["*"]);
+}
+
+#[test]
+fn legacy_trailing_bits_verify_but_identity_strings_stay_exact() {
+    let v: Value = serde_json::from_str(include_str!("../testdata/vectors.json")).unwrap();
+    let a = v["a"]["public"].as_str().unwrap();
+    let sig = v["signature"].as_str().unwrap();
+    let input = v["signInput"].as_str().unwrap();
+    let stray_key = v["strayBits"]["key"].as_str().unwrap();
+    assert!(verify(a, v["strayBits"]["signature"].as_str().unwrap(), input));
+    assert!(verify(stray_key, sig, input));
+    let w = v["w"].as_str().unwrap();
+    let mut message = stored(w, 1, v["body"].as_str().unwrap(), None);
+    message["from"] = json!(stray_key); message["sig"] = json!(sig);
+    let host = reading(vec![message]);
+    let client = Client::new(Some(&host), None);
+    let held = Thread {id: "key".into(), w: w.into(), allow: vec![a.into()], answer: Answer::default()};
+    let (_, got, kept, _) = client.read_thread(&held, 0, 0);
+    assert!(got.is_empty()); assert_eq!(kept.len(), 1);
+}
+
+#[test]
+fn malformed_and_deep_bodies_do_not_end_the_batch() {
+    let alice = keys(1);
+    let host = reading(vec![stored(W, 1, &"[".repeat(60000), Some(&alice)), Value::Null, json!({"seq":3,"at":3,"body":7,"sha256":[],"verified":true,"from":alice.public}), stored(W, 4, "next", Some(&alice))]);
+    let client = Client::new(Some(&host), None);
+    let (_, got, next) = client.read(W, "key", 0, 0);
+    assert_eq!(got.len(), 4); assert_eq!(next, 4);
+    assert!(got[0].json.is_none() && got[3].verified);
+    for message in &got[1..3] { assert!(!message.verified && message.from.is_none() && message.opened.is_none() && message.unverified_because.is_some()); }
+}
+
+#[test]
+fn shortened_receipt_is_not_a_matching_prefix() {
+    let v: Value = serde_json::from_str(include_str!("../testdata/vectors.json")).unwrap();
+    let mut receipt: Receipt = serde_json::from_value(v["receipt"].clone()).unwrap();
+    receipt.messages.clear();
+    assert_eq!(verify_receipt(&receipt, Some(&["seen".into()])).local_root_matches, Some(false));
+}
+
+#[test]
+fn shapes_reject_final_newlines() {
+    assert!(!is_id(&format!("{}\n", "a".repeat(26))));
+    assert!(!is_w(&format!("{}\n", W)));
+    assert!(!is_scope_key(&format!("{}\n", "a".repeat(26))));
+    assert!(!aamio::codec::is_key(&format!("{}\n", keys(1).public)));
+}
+
 fn keys(n: u8) -> Keys {
     Keys::from_seed([n; 32])
 }

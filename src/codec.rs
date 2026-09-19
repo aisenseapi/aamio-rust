@@ -2,7 +2,8 @@
 //! keys, signatures and envelopes; lowercase base32 for write addresses;
 //! sha256 in hex over exact bytes.
 
-use base64::engine::general_purpose::{STANDARD_NO_PAD, URL_SAFE_NO_PAD};
+use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig, URL_SAFE_NO_PAD};
+use base64::engine::DecodePaddingMode;
 use base64::Engine;
 use sha2::{Digest, Sha256};
 
@@ -15,11 +16,11 @@ pub fn b64url(bytes: &[u8]) -> String {
 /// without padding too, as the service does.
 pub fn unb64url(text: &str) -> Result<Vec<u8>, base64::DecodeError> {
     let trimmed = text.trim_end_matches('=');
-    if trimmed.contains('+') || trimmed.contains('/') {
-        STANDARD_NO_PAD.decode(trimmed)
-    } else {
-        URL_SAFE_NO_PAD.decode(trimmed)
-    }
+    // Historical records can carry unused trailing bits. Decode their bytes
+    // without changing identity strings used by allowlists or address books.
+    let alphabet = if trimmed.contains('+') || trimmed.contains('/') { &base64::alphabet::STANDARD } else { &base64::alphabet::URL_SAFE };
+    let config = GeneralPurposeConfig::new().with_decode_allow_trailing_bits(true).with_decode_padding_mode(DecodePaddingMode::Indifferent);
+    GeneralPurpose::new(alphabet, config).decode(trimmed)
 }
 
 /// Lowercase hex of sha256 over the exact bytes.

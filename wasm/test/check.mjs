@@ -32,6 +32,7 @@ const seedB = unhex(v.b.seed);
 console.log("keys and signing");
 ok(aamio.publicKey(seedA) === v.a.public && aamio.publicKey(seedB) === v.b.public, "public keys from seeds");
 ok(aamio.sign(seedA, v.signInput) === v.signature, "signature of A over the vector input, byte for byte");
+ok(aamio.verify(v.a.public, v.strayBits.signature, v.signInput) && aamio.verify(v.strayBits.key, v.signature, v.signInput), "historical noncanonical encodings verify the same bytes");
 ok(aamio.verify(v.a.public, v.signature, v.signInput) && !aamio.verify(v.b.public, v.signature, v.signInput) && !aamio.verify(v.a.public, v.signature, v.signInput + "x"), "verify");
 ok(throws(() => aamio.publicKey(new Uint8Array(31)), "32 bytes"), "a seed of the wrong length is refused");
 const fresh = aamio.generateSeed();

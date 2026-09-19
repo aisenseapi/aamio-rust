@@ -16,7 +16,7 @@ use std::sync::Mutex;
 use serde_json::{json, Map, Value};
 
 use crate::address::{is_w, scope_address};
-use crate::client::{now, Answer, Client, Message, SendOptions, Sent, Thread};
+use crate::client::{now, Answer, Client, KeptOut, Message, SendOptions, Sent, Thread};
 use crate::codec::is_key;
 use crate::gate::{solve_board, ADVISE_MAX_BITS};
 use crate::keys::{board_delete_signing_input, board_signing_input};
@@ -230,7 +230,14 @@ impl<'a> Board<'a> {
         self.client.send(w, body.to_string().as_bytes(), SendOptions { seal_to: Some(key.to_string()), json: true, ..Default::default() })
     }
 
-    /// Answers on an inbox, decoded. Aliases `post_id`, `w`, `reply_address`,
+    /// Reads replies with the policy retained on the opened inbox.
+    pub fn replies_thread(&self, thread: &Thread, after: i64, wait: u32) -> (Answer, Vec<Reply>, Vec<KeptOut>, i64) {
+        let (answer, messages, kept, next) = self.client.read_thread(thread, after, wait);
+        (answer, Self::decode_replies(messages), kept, next)
+    }
+
+    /// Listless compatibility overload; use `replies_thread` to enforce the inbox policy.
+    /// Aliases `post_id`, `w`, `reply_address`,
     /// `replyTo`, `reply` and `message` are accepted and named under `renamed`.
     ///
     /// Everything read is returned, answers to other posts included. There is
@@ -241,6 +248,10 @@ impl<'a> Board<'a> {
     /// returned vector on `post`.
     pub fn replies(&self, w: &str, id: &str, after: i64, wait: u32) -> (Answer, Vec<Reply>, i64) {
         let (answer, messages, next) = self.client.read(w, id, after, wait);
+        (answer, Self::decode_replies(messages), next)
+    }
+
+    fn decode_replies(messages: Vec<Message>) -> Vec<Reply> {
         let aliases: [(&str, &[&str]); 3] = [("post", &["post_id"]), ("reply_to", &["w", "reply_address", "replyTo"]), ("text", &["reply", "message"])];
         let mut out = Vec::new();
         for message in messages {
@@ -271,7 +282,7 @@ impl<'a> Board<'a> {
                 message,
             });
         }
-        (answer, out, next)
+        out
     }
 
     /// Takes one of this key's posts off the board.

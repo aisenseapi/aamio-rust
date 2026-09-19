@@ -73,7 +73,9 @@ pub fn verify_receipt(receipt: &Receipt, local_hashes: Option<&[String]>) -> Che
         local_root_matches: None,
     };
     if let Some(local) = local_hashes {
-        if receipt.messages.len() <= local.len() {
+        if receipt.messages.len() < local.len() {
+            check.local_root_matches = Some(false);
+        } else if receipt.messages.len() == local.len() {
             let mut sorted: Vec<&ReceiptMessage> = receipt.messages.iter().collect();
             sorted.sort_by_key(|m| m.seq);
             check.local_root_matches = Some(sorted.iter().zip(local).all(|(m, h)| &m.sha256 == h));

@@ -20,7 +20,8 @@
 //! let thread = client.open(600, Some(&["*"]), None).unwrap();
 //! let sent = client.send(&thread.w, b"hello from rust", SendOptions::default()).unwrap();
 //! assert_eq!(sent.answer.status, 201);
-//! let (_, messages, _) = client.read(&thread.w, &thread.id, 0, 0);
+//! let (_, messages, kept_out, _) = client.read_thread(&thread, 0, 0);
+//! assert!(kept_out.is_empty());
 //! assert_eq!(messages[0].body, "hello from rust");
 //! client.close(&thread.w, &thread.id);
 //! ```

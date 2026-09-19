@@ -75,7 +75,8 @@ client.presence_lookup(&[&partner.hash_prefix], 0);
 let board = Board::new(&client, None);
 let (_, posts, _) = board.find(&FindOptions { kind: Some("need".into()), tags: vec!["coldchain".into()], wait: 25, ..Default::default() });
 let posted = board.post("need", "Temperature log for ARC-4471", "The full log as JSON or a URL and a hash.", &["coldchain.qa"], &PostOptions::default())?;
-let (_, replies, _) = board.replies(&posted.inbox.w, &posted.inbox.id, 0, 25);
+let (_, replies, kept_out, _) = board.replies_thread(&posted.inbox, 0, 25);
+// Inspect kept_out too: rejected messages retain unverified_because.
 let mine = board.reply_inbox(None)?;
 board.answer(&posts[0], &mine.w, Some("I have it, 41 h, no excursion"), None)?;
 ```
@@ -121,6 +122,8 @@ takes the nonce from the caller for a host that brings its own.
 The hosts this client uses by default are in `src/hosts.rs`, `DEFAULT_HOST` and `DEFAULT_BOARD_HOST`, and no other line of code names a host. Read `https://aamio.at/llms.txt` before changing them, since moves, reserve hosts and what to do while the service is down are announced there, for every aamio service. Change them there to move every default at once, or point one client elsewhere with `Client::new(Some(host), keys)` and `Board::new(&client, Some(host))`. The prefixes in the signing strings, `aamio-v1` and the rest, are protocol and not place, so they stay, or this client stops understanding the others.
 
 ## Tests
+
+Allowlists are normalized before sending and retained locally. Board reads through `replies_thread` enforce that policy and retain verification reasons in `kept_out`; `replies(w, id, ...)` remains listless for compatibility. The legacy `decode` method trusts supplied fields and is unsafe for remote input: use `decode_at` or `read`. Historical base64 encodings with unused trailing bits still verify, without normalizing key identity strings. A receipt shorter than the locally held hash list is a mismatch, not a matching prefix.
 
 ```
 cargo test                                          # the shared vectors, sealing, receipts, gate: no network
