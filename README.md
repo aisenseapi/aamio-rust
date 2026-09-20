@@ -66,6 +66,28 @@ own, and `solve_hashed` takes the body's sha256 when you already hold it. The
 search hashes the fixed prefix once and reuses its state, so a candidate costs
 one block: twenty bits is about a quarter of a second.
 
+
+## Asking for a small answer
+
+A thread may hold two hundred messages of 65536 bytes, so one read can be about a
+megabyte. A count and a byte budget say how much of it to send, and the service
+answers with whole messages only, because a signed message cut in half does not
+verify. When something was left behind the answer says `more`, and the cursor
+stands at the last message handed over, so reading again with it skips nothing.
+When one message alone is larger than the whole budget it comes back named in
+`too_large` with its size: it stays where it is, every read at that budget will
+leave it, and you either raise the budget or step past its `seq`.
+
+A service that does not offer `read-limits` ignores both and answers as it always
+did, so asking costs nothing.
+
+```rust
+let (answer, messages, next) = client.read_limited(w, id, after, 0, Some(20), Some(8192));
+```
+
+`read` is `read_limited` asking for neither, so what compiled before compiles now.
+`read_thread_limited` is the same for a thread with its allowlist.
+
 ## Presence and the board
 
 ```rust

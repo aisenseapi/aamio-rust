@@ -381,6 +381,25 @@ impl Client {
     /// this client's result, not the service's word, and a message the service
     /// called verified that does not check out says why in `unverified_because`.
     pub fn read(&self, w: &str, id: &str, after: i64, wait: u32) -> (Answer, Vec<Message>, i64) {
+        self.read_limited(w, id, after, wait, None, None)
+    }
+
+    /// `read`, asking the service for a small answer.
+    ///
+    /// `limit` is at most this many messages, `max_bytes` at most this many bytes of
+    /// them; `None` for either means do not ask, and asking for neither is exactly
+    /// [`Client::read`]. A thread may hold two hundred messages of 65536 bytes, so one
+    /// read can be about a megabyte, and without these the whole of it crosses the
+    /// network before anything here looks at it.
+    ///
+    /// Whole messages only: a signed message cut in half does not verify. When
+    /// something was left behind the answer carries `more`, and `next` is the last
+    /// message handed over, so passing it back as `after` skips nothing. When one
+    /// message alone is over budget the answer carries `too_large` naming it.
+    ///
+    /// A service that does not offer `read-limits` ignores both headers and answers as
+    /// it always did, so these are safe to send without asking what it supports.
+    pub fn read_limited(&self, w: &str, id: &str, after: i64, wait: u32, limit: Option<u32>, max_bytes: Option<u64>) -> (Answer, Vec<Message>, i64) {
         let mut path = format!("/{}", w);
         if after > 0 || wait > 0 {
             path.push_str(&format!("/after/{}", after));
@@ -388,7 +407,16 @@ impl Client {
         if wait > 0 {
             path.push_str(&format!("/wait/{}", wait.min(25)));
         }
-        let answer = self.call("GET", &format!("{}{}", self.host, path), None, &[("X-Read", id)]);
+        let counted = limit.map(|n| n.to_string());
+        let budgeted = max_bytes.map(|n| n.to_string());
+        let mut headers: Vec<(&str, &str)> = vec![("X-Read", id)];
+        if let Some(n) = counted.as_deref() {
+            headers.push(("X-Limit", n));
+        }
+        if let Some(n) = budgeted.as_deref() {
+            headers.push(("X-Max-Bytes", n));
+        }
+        let answer = self.call("GET", &format!("{}{}", self.host, path), None, &headers);
         let mut messages = Vec::new();
         let mut next = after;
         if answer.status == 200 {
@@ -416,8 +444,15 @@ impl Client {
     /// `*`, only messages verified here from any key. The rest is listed as
     /// kept out, never dropped in silence. The cursor covers both.
     pub fn read_thread(&self, thread: &Thread, after: i64, wait: u32) -> (Answer, Vec<Message>, Vec<KeptOut>, i64) {
+        self.read_thread_limited(thread, after, wait, None, None)
+    }
+
+    /// [`Client::read_thread`] with the limits of [`Client::read_limited`]. A smaller
+    /// answer is not a looser one: the allowlist is checked here exactly as before, and
+    /// what it keeps out is still listed rather than dropped in silence.
+    pub fn read_thread_limited(&self, thread: &Thread, after: i64, wait: u32, limit: Option<u32>, max_bytes: Option<u64>) -> (Answer, Vec<Message>, Vec<KeptOut>, i64) {
         let allow = normalize_allow(thread.allow.iter().map(String::as_str));
-        let (answer, messages, next) = self.read(&thread.w, &thread.id, after, wait);
+        let (answer, messages, next) = self.read_limited(&thread.w, &thread.id, after, wait, limit, max_bytes);
         if allow.is_empty() {
             return (answer, messages, Vec::new(), next);
         }
