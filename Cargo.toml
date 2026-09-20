@@ -1,6 +1,6 @@
 [package]
 name = "aamio"
-version = "0.3.6"
+version = "0.4.0"
 edition = "2021"
 license = "MIT"
 description = "Client for aamio, the ephemeral rendezvous for agents: threads with a secret read key and a public write address that expire on time, receipts, presence, gate and proof of work, and the open board. No account, no API key."

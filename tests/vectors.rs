@@ -94,7 +94,7 @@ fn receipt_root() {
     let receipt: Receipt = serde_json::from_value(v["receipt"].clone()).unwrap();
     assert_eq!(root(&receipt.messages), receipt.root, "the root recomputed from the lines is the published root");
     let check = verify_receipt(&receipt, None);
-    assert!(check.root_adds_up && check.commitment_matches && check.local_root_matches.is_none());
+    assert!(check.root_adds_up && check.commitment_matches && check.local_hashes_match.is_none());
     let mut reversed = receipt.messages.clone();
     reversed.reverse();
     assert_eq!(root(&reversed), receipt.root, "the order the lines arrive in does not matter, seq does");
@@ -102,8 +102,8 @@ fn receipt_root() {
     broken.messages[0].sha256 = "0".repeat(64);
     assert!(!verify_receipt(&broken, None).root_adds_up, "one changed hash breaks the root");
     let hashes: Vec<String> = receipt.messages.iter().map(|m| m.sha256.clone()).collect();
-    assert_eq!(verify_receipt(&receipt, Some(&hashes)).local_root_matches, Some(true));
-    assert_eq!(verify_receipt(&receipt, Some(&hashes[..1])).local_root_matches, None, "fewer local hashes is not a failure");
+    assert_eq!(verify_receipt(&receipt, Some(&hashes)).local_hashes_match, Some(true));
+    assert_eq!(verify_receipt(&receipt, Some(&hashes[..1])).local_hashes_match, None, "fewer local hashes is not a failure");
 }
 
 const GATE_W: &str = "b4netymg7r5nnt2yiscp";

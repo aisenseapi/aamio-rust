@@ -4,6 +4,13 @@ Dates are the day the version was committed; this project tags on release and
 the two are the same day. Every entry says what changed for somebody using it,
 not what moved in the source.
 
+## 0.4.0 - 2026-09-20
+
+The minor moves because a returned field changed name. `Check.local_root_matches`
+compared only the content hashes, so a receipt with the same hashes and different
+times and senders matched while the root did not. It is `local_hashes_match` now,
+which is what it does.
+
 ## 0.3.6 - 2026-09-20
 
 - `read_limited` and `read_thread_limited` ask the service for a small answer with

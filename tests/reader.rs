@@ -75,7 +75,7 @@ fn shortened_receipt_is_not_a_matching_prefix() {
     let v: Value = serde_json::from_str(include_str!("../testdata/vectors.json")).unwrap();
     let mut receipt: Receipt = serde_json::from_value(v["receipt"].clone()).unwrap();
     receipt.messages.clear();
-    assert_eq!(verify_receipt(&receipt, Some(&["seen".into()])).local_root_matches, Some(false));
+    assert_eq!(verify_receipt(&receipt, Some(&["seen".into()])).local_hashes_match, Some(false));
 }
 
 #[test]

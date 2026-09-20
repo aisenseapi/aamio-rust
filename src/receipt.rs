@@ -54,14 +54,14 @@ pub fn root(messages: &[ReceiptMessage]) -> String {
     sha256_hex(lines.as_bytes())
 }
 
-/// What a client can say about a receipt on its own. `local_root_matches` is
+/// What a client can say about a receipt on its own. `local_hashes_match` is
 /// `None` when the receipt counts more messages than the client holds, which
 /// is a receipt taken later, not a failure.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Check {
     pub root_adds_up: bool,
     pub commitment_matches: bool,
-    pub local_root_matches: Option<bool>,
+    pub local_hashes_match: Option<bool>,
 }
 
 /// Recomputes and compares. `local_hashes` are the sha256 values this process saw, in seq order.
@@ -70,15 +70,15 @@ pub fn verify_receipt(receipt: &Receipt, local_hashes: Option<&[String]>) -> Che
     let mut check = Check {
         root_adds_up: computed == receipt.root,
         commitment_matches: receipt.commitment == format!("sha256:{}", receipt.root),
-        local_root_matches: None,
+        local_hashes_match: None,
     };
     if let Some(local) = local_hashes {
         if receipt.messages.len() < local.len() {
-            check.local_root_matches = Some(false);
+            check.local_hashes_match = Some(false);
         } else if receipt.messages.len() == local.len() {
             let mut sorted: Vec<&ReceiptMessage> = receipt.messages.iter().collect();
             sorted.sort_by_key(|m| m.seq);
-            check.local_root_matches = Some(sorted.iter().zip(local).all(|(m, h)| &m.sha256 == h));
+            check.local_hashes_match = Some(sorted.iter().zip(local).all(|(m, h)| &m.sha256 == h));
         }
     }
     check
