@@ -42,7 +42,7 @@ pub use hosts::{DEFAULT_BOARD_HOST, DEFAULT_HOST};
 #[cfg(feature = "http")]
 pub use board::{Board, FindOptions, PostOptions, Posted, Reply};
 #[cfg(feature = "http")]
-pub use client::{check_message, Answer, Client, KeptOut, Message, SendOptions, Sent, Thread};
+pub use client::{check_message, Answer, Client, KeptOut, Message, Reset, SendOptions, Sent, Thread};
 pub use gate::{
     board_pow_digest, board_pow_input, canonical, describe_seconds, expected_seconds, gate_hash, hash_rate, is_nonce, plan,
     plan_within, pow_digest, pow_input, solve, solve_board, solve_board_hashed, solve_hashed, solve_until, zero_bits, Plan,

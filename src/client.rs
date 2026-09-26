@@ -24,6 +24,18 @@ const MAX_BODY: usize = 65536;
 /// What the service said: the HTTP status, the decoded body when it was JSON
 /// (an object as a map), the raw text otherwise. Status 0 is no answer at
 /// all: the request may have landed, which is unknown, never refused.
+/// What an answer says when the cursor it was given belongs to an earlier thread
+/// at the address.
+///
+/// `after` is the cursor that was sent, `newest` the largest sequence number the
+/// thread now has, and `what` says it in words.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reset {
+    pub after: i64,
+    pub newest: i64,
+    pub what: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Answer {
     pub status: u16,
@@ -48,6 +60,28 @@ impl Answer {
     /// A field of the body.
     pub fn get(&self, field: &str) -> Option<&Value> {
         self.body.as_ref().and_then(|b| b.get(field))
+    }
+
+    /// Whether this answer read from the start, and why.
+    ///
+    /// `reset` means the cursor belongs to an earlier thread at the address: the
+    /// one being read expired and was swept, and a write opened a new one there,
+    /// with the default lifetime and none of the old allowlist or gate. The answer
+    /// reads from the start rather than waiting for the new numbering to pass an
+    /// old cursor.
+    ///
+    /// Following `next` alone comes out right -- the loop corrects itself -- and
+    /// says nothing, so a stranger's new thread at the same address arrives as if
+    /// the conversation had continued. The service has answered this since 0.6.0
+    /// and this client had no name for it until 26 September 2026.
+    pub fn reset(&self) -> Option<Reset> {
+        let raw = self.get("reset")?.as_object()?;
+
+        Some(Reset {
+            after: raw.get("after").and_then(Value::as_i64).unwrap_or(0),
+            newest: raw.get("newest").and_then(Value::as_i64).unwrap_or(0),
+            what: raw.get("what").and_then(Value::as_str).unwrap_or("").to_string(),
+        })
     }
 
     fn no_answer(reason: String) -> Answer {
@@ -621,4 +655,39 @@ impl Client {
 
 pub(crate) fn now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod reset_tests {
+    use super::*;
+
+    fn answer_with(body: &str) -> Answer {
+        Answer {
+            status: 200,
+            body: serde_json::from_str(body).ok(),
+            text: body.to_string(),
+        }
+    }
+
+    /// The service has answered reset since 0.6.0 and this client had no name for
+    /// it. Following next alone comes out right and says nothing, so a stranger's
+    /// new thread at the same address arrives as if the conversation continued.
+    #[test]
+    fn an_answer_says_when_the_cursor_belongs_to_an_earlier_thread() {
+        let answer = answer_with(
+            r#"{"exists":true,"next":2,"reset":{"after":91,"newest":2,"what":"after 91 is past the newest number this thread holds, 2"}}"#,
+        );
+
+        let reset = answer.reset().expect("an answer that read from the start said nothing about it");
+
+        assert_eq!(reset.after, 91);
+        assert_eq!(reset.newest, 2);
+        assert!(!reset.what.is_empty(), "and said nothing in words, which is what a caller shows a person");
+    }
+
+    #[test]
+    fn an_ordinary_answer_claims_no_reset() {
+        assert!(answer_with(r#"{"exists":true,"next":2}"#).reset().is_none());
+        assert!(Answer { status: 200, body: None, text: String::new() }.reset().is_none());
+    }
 }
