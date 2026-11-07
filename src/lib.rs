@@ -32,12 +32,14 @@ pub mod board;
 #[cfg(feature = "http")]
 pub mod client;
 pub mod codec;
+pub mod domain_keys;
 pub mod gate;
 pub mod hosts;
 pub mod keys;
 pub mod receipt;
 
 pub use address::{is_id, is_scope_key, is_w, new_id, new_scope_key, scope_address, w};
+pub use domain_keys::{domain_keys_url, make_domain_keys, match_domain_key, normalise_domain, parse_domain_keys, DomainKey, DomainMatch, InvalidDomainKeys};
 pub use hosts::{DEFAULT_BOARD_HOST, DEFAULT_HOST};
 #[cfg(feature = "http")]
 pub use board::{Board, FindOptions, PostOptions, Posted, Reply};
