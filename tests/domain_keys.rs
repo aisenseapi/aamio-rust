@@ -28,7 +28,8 @@ fn the_vectors_are_the_shared_ones() {
     let Ok(there) = std::fs::read_to_string("../aamio-python/tests/domain_keys_vectors.json") else {
         return;
     };
-    assert!(there == VECTORS, "testdata/domain_keys_vectors.json differs from the one aamio-python keeps");
+    // Compared without what a checkout does to line breaks.
+    assert!(there.replace("\r\n", "\n") == VECTORS.replace("\r\n", "\n"), "testdata/domain_keys_vectors.json differs from the one aamio-python keeps");
 }
 
 #[test]
